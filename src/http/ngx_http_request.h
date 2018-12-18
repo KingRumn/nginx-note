@@ -60,7 +60,7 @@
 
 
 /* unused                                  1 */
-#define NGX_HTTP_SUBREQUEST_IN_MEMORY      2
+#define NGX_HTTP_SUBREQUEST_IN_MEMORY      2    // 放到内存中处理，不直接写入输出流
 #define NGX_HTTP_SUBREQUEST_WAITED         4
 #define NGX_HTTP_SUBREQUEST_CLONE          8
 
@@ -335,17 +335,17 @@ typedef ngx_int_t (*ngx_http_post_subrequest_pt)(ngx_http_request_t *r,
     void *data, ngx_int_t rc);
 
 typedef struct {
-    ngx_http_post_subrequest_pt       handler;
-    void                             *data;
+    ngx_http_post_subrequest_pt       handler;      //write handler
+    void                             *data;         //传递给handler的数据
 } ngx_http_post_subrequest_t;
 
 
 typedef struct ngx_http_postponed_request_s  ngx_http_postponed_request_t;
 
 struct ngx_http_postponed_request_s {
-    ngx_http_request_t               *request;
-    ngx_chain_t                      *out;
-    ngx_http_postponed_request_t     *next;
+    ngx_http_request_t               *request;  //子请求
+    ngx_chain_t                      *out;      //需要发送的数据
+    ngx_http_postponed_request_t     *next;     //下一个postponed请求
 };
 
 
@@ -407,11 +407,11 @@ struct ngx_http_request_s {
     ngx_str_t                         http_protocol;
 
     ngx_chain_t                      *out;
-    ngx_http_request_t               *main;
-    ngx_http_request_t               *parent;
-    ngx_http_postponed_request_t     *postponed;
-    ngx_http_post_subrequest_t       *post_subrequest;
-    ngx_http_posted_request_t        *posted_requests;
+    ngx_http_request_t               *main;         //主请求，当前request链中最上面的那个request，通常用来判断是否是主请求 r == r->main
+    ngx_http_request_t               *parent;       //当前请求的父请求，
+    ngx_http_postponed_request_t     *postponed;    //缓存父请求的数据，包括r, out, next
+    ngx_http_post_subrequest_t       *post_subrequest;  //子请求的post request，需要被发送的子请求， 包括handler， data
+    ngx_http_posted_request_t        *posted_requests;  //所有需要处理的请求，r, next
 
     ngx_int_t                         phase_handler;
     ngx_http_handler_pt               content_handler;
@@ -442,7 +442,7 @@ struct ngx_http_request_s {
 
     ngx_http_cleanup_t               *cleanup;
 
-    unsigned                          count:16;
+    unsigned                          count:16;     // 当前处理的请求数， 0表示已经处理完所有的请求
     unsigned                          subrequests:8;
     unsigned                          blocked:8;
 

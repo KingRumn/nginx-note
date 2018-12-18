@@ -1,1 +1,7 @@
+Makefile
+objs/*
+build_dir/*
+!build_dir/conf/
 tags
+cscope.out
+

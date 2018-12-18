@@ -1842,6 +1842,9 @@ ngx_http_process_request_header(ngx_http_request_t *r)
 }
 
 
+/*
+ * post
+ * */
 void
 ngx_http_process_request(ngx_http_request_t *r)
 {
@@ -2241,12 +2244,14 @@ ngx_http_run_posted_requests(ngx_connection_t *c)
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http posted request: \"%V?%V\"", &r->uri, &r->args);
-
+        // 遍历posted_request，调用其write_event_handler
         r->write_event_handler(r);
     }
 }
 
-
+/*
+ * 用来将r放入post_requests
+ * */
 ngx_int_t
 ngx_http_post_request(ngx_http_request_t *r, ngx_http_posted_request_t *pr)
 {
@@ -2269,7 +2274,9 @@ ngx_http_post_request(ngx_http_request_t *r, ngx_http_posted_request_t *pr)
     return NGX_OK;
 }
 
-
+/*
+ * 大部分用来处理subrequest
+ * */
 void
 ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
 {
@@ -2345,9 +2352,10 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         ngx_http_finalize_request(r, ngx_http_special_response_handler(r, rc));
         return;
     }
-
+    // 如果r不等于r->main的话，则说明当前的请求是是sub request，此时进入相关处理
     if (r != r->main) {
 
+        // 如果含有postponed的话，则说明这个request并不是最后一个sub request，因此设置write handler，并且返回
         if (r->buffered || r->postponed) {
 
             if (ngx_http_set_write_handler(r) != NGX_OK) {
@@ -2357,8 +2365,13 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             return;
         }
 
+        // 取得request的父request
         pr = r->parent;
 
+       /*
+        * 如果r等于c->data,则说明当前是最后一个sub request，
+        * 此时需要修改c->data,以便于在postponed filter中发送保存的父request的数据
+        * */
         if (r == c->data) {
 
             r->main->count--;
@@ -2380,11 +2393,15 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             }
 
             r->done = 1;
-
+            /*
+             * 如果父request的postponed存在并且它的request为当前的r，
+             * 则开始处理接下来的postponed。
+             * */
             if (pr->postponed && pr->postponed->request == r) {
                 pr->postponed = pr->postponed->next;
             }
 
+            // 修改c->data,这个将会在run_post_request中使用，接下来就会分析这个函数
             c->data = pr;
 
         } else {
@@ -2393,6 +2410,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
                            "http finalize non-active request: \"%V?%V\"",
                            &r->uri, &r->args);
 
+            // 否则则设置write handler.
             r->write_event_handler = ngx_http_request_finalizer;
 
             if (r->waited) {
@@ -2400,6 +2418,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             }
         }
 
+        // 最终将pr也就是父request放入到post request中
         if (ngx_http_post_request(pr, NULL) != NGX_OK) {
             r->main->count++;
             ngx_http_terminate_request(r, 0);

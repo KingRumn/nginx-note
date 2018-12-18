@@ -2432,11 +2432,17 @@ ngx_http_gzip_quantity(u_char *p, u_char *last)
 
 #endif
 
-
+/* 新建一个request， 并设置其属性
+ * 大部分属性与父请求相同；
+ * 这些属性在函数执行完以后可以自行修改；
+ */
 ngx_int_t
-ngx_http_subrequest(ngx_http_request_t *r,
-    ngx_str_t *uri, ngx_str_t *args, ngx_http_request_t **psr,
-    ngx_http_post_subrequest_t *ps, ngx_uint_t flags)
+ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求的父请求；
+    ngx_str_t *uri,     // 子请求uri，不包括域名和参数：/a/b/c
+    ngx_str_t *args,    // 子请求的参数，?之后的内容
+    ngx_http_request_t **psr,   // 最终生成的子请求；
+    ngx_http_post_subrequest_t *ps, // 子请求生成的post_subrequest;
+    ngx_uint_t flags)       // 一些参数:
 {
     ngx_time_t                    *tp;
     ngx_connection_t              *c;
@@ -2444,6 +2450,7 @@ ngx_http_subrequest(ngx_http_request_t *r,
     ngx_http_core_srv_conf_t      *cscf;
     ngx_http_postponed_request_t  *pr, *p;
 
+    // 当前可以处理的最大子请求数, 当前默认为50
     if (r->subrequests == 0) {
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                       "subrequests cycle while processing \"%V\"", uri);
@@ -2460,6 +2467,9 @@ ngx_http_subrequest(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
+    /*
+     * 新建请求
+     * */
     sr = ngx_pcalloc(r->pool, sizeof(ngx_http_request_t));
     if (sr == NULL) {
         return NGX_ERROR;
@@ -2470,6 +2480,9 @@ ngx_http_subrequest(ngx_http_request_t *r,
     c = r->connection;
     sr->connection = c;
 
+    /*
+     * 创建上下文存储空间
+     */
     sr->ctx = ngx_pcalloc(r->pool, sizeof(void *) * ngx_http_max_module);
     if (sr->ctx == NULL) {
         return NGX_ERROR;
@@ -2513,8 +2526,9 @@ ngx_http_subrequest(ngx_http_request_t *r,
 
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "http subrequest \"%V?%V\"", uri, &sr->args);
-
+    // 子请求内容是否放入内存中；不再直接写入输出流
     sr->subrequest_in_memory = (flags & NGX_HTTP_SUBREQUEST_IN_MEMORY) != 0;
+    // ?
     sr->waited = (flags & NGX_HTTP_SUBREQUEST_WAITED) != 0;
 
     sr->unparsed_uri = r->unparsed_uri;
@@ -2523,12 +2537,19 @@ ngx_http_subrequest(ngx_http_request_t *r,
 
     ngx_http_set_exten(sr);
 
+    // 设置最上层的request
     sr->main = r->main;
+    // 设置父请求
     sr->parent = r;
+    // 设置为传入的参数；处理子请求时的回调函数，如果为空，则不需要处理
     sr->post_subrequest = ps;
+
+    // 空函数, 在subrequest中，不处理读事件
     sr->read_event_handler = ngx_http_request_empty_handler;
+    // nginx handler的入口, 也就是说，子请求同样会经历所有的处理阶段
     sr->write_event_handler = ngx_http_handler;
 
+    // ?设置连接的request为子请求。这里的意思是如果父请求设置第二个子请求的话，这里就不需要设置连接的request了
     if (c->data == r && r->postponed == NULL) {
         c->data = sr;
     }
@@ -2542,9 +2563,11 @@ ngx_http_subrequest(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
+    // post_subreqeust,
     pr->request = sr;
     pr->out = NULL;
     pr->next = NULL;
+
 
     if (r->postponed) {
         for (p = r->postponed; p->next; p = p->next) { /* void */ }
@@ -2560,9 +2583,12 @@ ngx_http_subrequest(ngx_http_request_t *r,
     sr->expect_tested = 1;
     sr->main_filter_need_in_memory = r->main_filter_need_in_memory;
 
+    // 重定向最多10次，正确设置uri_changes
     sr->uri_changes = NGX_HTTP_MAX_URI_CHANGES + 1;
+    // 个数-1, 这里应该是除main外，子请求的嵌套深度不超过50(MAX)
     sr->subrequests = r->subrequests - 1;
 
+    // 设置创建请求的时间
     tp = ngx_timeofday();
     sr->start_sec = tp->sec;
     sr->start_msec = tp->msec;
@@ -2571,6 +2597,7 @@ ngx_http_subrequest(ngx_http_request_t *r,
 
     *psr = sr;
 
+    // 设置了clone标志，直接复制父请求的所有处理方法
     if (flags & NGX_HTTP_SUBREQUEST_CLONE) {
         sr->method = r->method;
         sr->method_name = r->method_name;
@@ -2583,6 +2610,7 @@ ngx_http_subrequest(ngx_http_request_t *r,
         ngx_http_update_location_config(sr);
     }
 
+    // 放入main的posted_request
     return ngx_http_post_request(sr, NULL);
 }
 
