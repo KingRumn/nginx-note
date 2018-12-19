@@ -130,8 +130,14 @@ typedef struct ngx_http_phase_handler_s  ngx_http_phase_handler_t;
 typedef ngx_int_t (*ngx_http_phase_handler_pt)(ngx_http_request_t *r,
     ngx_http_phase_handler_t *ph);
 
+/* 仅表示某个阶段的一个处理方法 */
 struct ngx_http_phase_handler_s {
+    /* 尽可以由HTTP框架实现，以此控制请求的处理流程
+     * 在处理到某个HTTP阶段时，框架将会在checker方法已实现的前提下首先调用checker方法；
+     * 并不会直接调用任何handler方法，只有在checker方法中才会调用handler方法；
+     * 事实上所有的checker方法均由ngx_http_core_module模块实现 */
     ngx_http_phase_handler_pt  checker;
+    /* HTTP模块实现的handler方法 */
     ngx_http_handler_pt        handler;
     ngx_uint_t                 next;
 };

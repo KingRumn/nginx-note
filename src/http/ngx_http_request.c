@@ -194,7 +194,7 @@ ngx_http_header_t  ngx_http_headers_in[] = {
     { ngx_null_string, 0, NULL }
 };
 
-
+/* HTTP框架第一步：新建连接 */
 void
 ngx_http_init_connection(ngx_connection_t *c)
 {
@@ -313,7 +313,9 @@ ngx_http_init_connection(ngx_connection_t *c)
     c->log_error = NGX_ERROR_INFO;
 
     rev = c->read;
+    /*  */
     rev->handler = ngx_http_wait_request_handler;
+    /* 新建连接不需要处理写事件，写事件被触发后，什么都不做，直接交还给事件循环 */
     c->write->handler = ngx_http_empty_handler;
 
 #if (NGX_HTTP_V2)
@@ -352,6 +354,7 @@ ngx_http_init_connection(ngx_connection_t *c)
         c->log->action = "reading PROXY protocol";
     }
 
+    /* 把这个连接对应的套接字缓冲区上已经有数据， 可以调用可读事件处理函数进行处理 */
     if (rev->ready) {
         /* the deferred accept(), iocp */
 
@@ -360,6 +363,8 @@ ngx_http_init_connection(ngx_connection_t *c)
             return;
         }
 
+        /* HTTP协议下，此处就是已经设置的ngx_http_wait_request_handler
+         * 对于非http_2和SSL分别对应ngx_http_v2_init 、ngx_http_ssl_handshake*/
         rev->handler(rev);
         return;
     }
@@ -389,6 +394,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http wait request handler");
 
+    /* 检查超时 */
     if (rev->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "client timed out");
         ngx_http_close_connection(c);
@@ -400,9 +406,11 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
         return;
     }
 
+
     hc = c->data;
     cscf = ngx_http_get_module_srv_conf(hc->conf_ctx, ngx_http_core_module);
 
+    /* 依据配置的client_header_buffer_size创建缓冲区 */
     size = cscf->client_header_buffer_size;
 
     b = c->buffer;
@@ -418,6 +426,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     } else if (b->start == NULL) {
 
+        /* 为buf分配空间 */
         b->start = ngx_palloc(c->pool, size);
         if (b->start == NULL) {
             ngx_http_close_connection(c);
@@ -429,6 +438,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
         b->end = b->last + size;
     }
 
+    /* 接收数据 */
     n = c->recv(c, b->last, size);
 
     if (n == NGX_AGAIN) {
@@ -493,12 +503,14 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     ngx_reusable_connection(c, 0);
 
+    /* 构造ngx_http_request_t, 并赋值给c->data */
     c->data = ngx_http_create_request(c);
     if (c->data == NULL) {
         ngx_http_close_connection(c);
         return;
     }
 
+    /* 设置可读handler为 ngx_http_process_request_line, 开始处理首行 */
     rev->handler = ngx_http_process_request_line;
     ngx_http_process_request_line(rev);
 }
@@ -915,7 +927,7 @@ ngx_http_ssl_servername(ngx_ssl_conn_t *ssl_conn, int *ad, void *arg)
 
 #endif
 
-
+/* 处理HTTP请求行 */
 static void
 ngx_http_process_request_line(ngx_event_t *rev)
 {
@@ -931,6 +943,7 @@ ngx_http_process_request_line(ngx_event_t *rev)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, rev->log, 0,
                    "http process request line");
 
+    /* 检查是否超时，如果超时，直接关闭请求 */
     if (rev->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "client timed out");
         c->timedout = 1;
@@ -942,6 +955,7 @@ ngx_http_process_request_line(ngx_event_t *rev)
 
     for ( ;; ) {
 
+        /* 读取http数据, 首行和头部均用该函数进行数据读取 */
         if (rc == NGX_AGAIN) {
             n = ngx_http_read_request_header(r);
 
@@ -950,6 +964,7 @@ ngx_http_process_request_line(ngx_event_t *rev)
             }
         }
 
+        /* 解析首行 */
         rc = ngx_http_parse_request_line(r, r->header_in);
 
         if (rc == NGX_OK) {
@@ -1385,6 +1400,7 @@ ngx_http_read_request_header(ngx_http_request_t *r)
         return n;
     }
 
+    /* 有数据，则读取，返回读取的长度，或者NGX_AGAIN */
     if (rev->ready) {
         n = c->recv(c, r->header_in->last,
                     r->header_in->end - r->header_in->last);
@@ -2224,7 +2240,7 @@ ngx_http_run_posted_requests(ngx_connection_t *c)
     ngx_http_posted_request_t  *pr;
 
     for ( ;; ) {
-
+        /* 连接已经断开，直接返回 */
         if (c->destroyed) {
             return;
         }
@@ -2232,25 +2248,28 @@ ngx_http_run_posted_requests(ngx_connection_t *c)
         r = c->data;
         pr = r->main->posted_requests;
 
+        /* 从posted_requests链表的队头开始遍历 */
         if (pr == NULL) {
             return;
         }
 
+        /* 从链表中移除即将要遍历的节点 */
         r->main->posted_requests = pr->next;
 
+        /* 得到该节点中保存的请求 */
         r = pr->request;
 
         ngx_http_set_log_request(c->log, r);
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http posted request: \"%V?%V\"", &r->uri, &r->args);
-        // 遍历posted_request，调用其write_event_handler
+        /* 遍历posted_request，调用其write_event_handler */
         r->write_event_handler(r);
     }
 }
 
 /*
- * 用来将r放入post_requests
+ * 用来将r放入主请求的posted_requests
  * */
 ngx_int_t
 ngx_http_post_request(ngx_http_request_t *r, ngx_http_posted_request_t *pr)
@@ -2306,6 +2325,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
+    /* 如果当前请求是一个子请求，检查它是否有回调handler，有的话执行之 */
     if (r != r->main && r->post_subrequest) {
         rc = r->post_subrequest->handler(r, r->post_subrequest->data, rc);
     }
@@ -2352,12 +2372,15 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         ngx_http_finalize_request(r, ngx_http_special_response_handler(r, rc));
         return;
     }
-    // 如果r不等于r->main的话，则说明当前的请求是是sub request，此时进入相关处理
+    /* 子请求 */
     if (r != r->main) {
 
-        // 如果含有postponed的话，则说明这个request并不是最后一个sub request，因此设置write handler，并且返回
+        /* 该子请求还有未处理完的数据或者子请求 */
         if (r->buffered || r->postponed) {
 
+            /* 添加一个该子请求的写事件，并设置合适的write event hander，
+             * 以便下次写事件来的时候继续处理，这里实际上下次执行时会调用ngx_http_output_filter函数，
+             * 最终还是会进入ngx_http_postpone_filter进行处理 */
             if (ngx_http_set_write_handler(r) != NGX_OK) {
                 ngx_http_terminate_request(r, 0);
             }
@@ -2369,8 +2392,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         pr = r->parent;
 
        /*
-        * 如果r等于c->data,则说明当前是最后一个sub request，
-        * 此时需要修改c->data,以便于在postponed filter中发送保存的父request的数据
+        * 该子请求已经处理完毕，如果它拥有发送数据的权利，则将权利移交给父请求
         * */
         if (r == c->data) {
 
@@ -2395,22 +2417,27 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             r->done = 1;
             /*
              * 如果父request的postponed存在并且它的request为当前的r，
-             * 则开始处理接下来的postponed。
+             * 则开始处理接下来的postponed
+             * 如果该子请求不是提前完成，则从父请求的postponed链表中删除
              * */
             if (pr->postponed && pr->postponed->request == r) {
                 pr->postponed = pr->postponed->next;
             }
 
-            // 修改c->data,这个将会在run_post_request中使用，接下来就会分析这个函数
+            /* 将发送权利移交给父请求，父请求下次执行的时候会发送它的postponed链表中可以
+             * 发送的数据节点，或者将发送权利移交给它的下一个子请求 */
             c->data = pr;
 
         } else {
 
+            /* 到这里其实表明该子请求提前执行完成，而且它没有产生任何数据，则它下次再次获得
+             * 执行机会时，将会执行ngx_http_request_finalzier函数，它实际上是执行
+             * ngx_http_finalzie_request（r,0），也就是什么都不干，直到轮到它发送数据时，
+             * ngx_http_finalzie_request函数会将它从父请求的postponed链表中删除 */
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                            "http finalize non-active request: \"%V?%V\"",
                            &r->uri, &r->args);
 
-            // 否则则设置write handler.
             r->write_event_handler = ngx_http_request_finalizer;
 
             if (r->waited) {
@@ -2418,7 +2445,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             }
         }
 
-        // 最终将pr也就是父request放入到post request中
+        /* 将父请求加入posted_request队尾，获得一次运行机会 */
         if (ngx_http_post_request(pr, NULL) != NGX_OK) {
             r->main->count++;
             ngx_http_terminate_request(r, 0);
@@ -2432,6 +2459,9 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
+    /* 这里是处理主请求结束的逻辑，如果主请求有未发送的数据或者未处理的子请求，
+     * 则给主请求添加写事件，并设置合适的write event hander，
+     * 以便下次写事件来的时候继续处理 */
     if (r->buffered || c->buffered || r->postponed || r->blocked) {
 
         if (ngx_http_set_write_handler(r) != NGX_OK) {

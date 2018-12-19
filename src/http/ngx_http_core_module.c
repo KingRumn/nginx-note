@@ -1949,7 +1949,7 @@ ngx_http_send_response(ngx_http_request_t *r, ngx_uint_t status,
     return ngx_http_output_filter(r, &out);
 }
 
-
+// 启动header_filter
 ngx_int_t
 ngx_http_send_header(ngx_http_request_t *r)
 {
@@ -1971,7 +1971,7 @@ ngx_http_send_header(ngx_http_request_t *r)
     return ngx_http_top_header_filter(r);
 }
 
-
+// 启动body_filter
 ngx_int_t
 ngx_http_output_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
@@ -2432,9 +2432,14 @@ ngx_http_gzip_quantity(u_char *p, u_char *last)
 
 #endif
 
-/* 新建一个request， 并设置其属性
+/*
+ * 新建一个request， 并设置其属性;
  * 大部分属性与父请求相同；
  * 这些属性在函数执行完以后可以自行修改；
+ * 一般来说子请求的创建都发生在某个请求的content handler或者某个filter内，
+ * 从上面的函数可以看到子请求并没有马上被执行，只是被挂载在了主请求的posted_requests链表中;
+ * 在某个请求的读（写）事件的handler中，执行完该请求相关的处理后调用ngx_http_run_posted_requests，
+ * 此时子请求得以被执行；
  */
 ngx_int_t
 ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求的父请求；
@@ -2539,9 +2544,11 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
 
     // 设置最上层的request
     sr->main = r->main;
-    // 设置父请求
+    // 设置父请求为当前请求
     sr->parent = r;
-    // 设置为传入的参数；处理子请求时的回调函数，如果为空，则不需要处理
+    /* 设置为传入的参数；处理子请求时的回调函数，如果为空，则不需要处理
+     * 在子请求结束后，会调用
+     * */
     sr->post_subrequest = ps;
 
     // 空函数, 在subrequest中，不处理读事件
@@ -2549,11 +2556,15 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
     // nginx handler的入口, 也就是说，子请求同样会经历所有的处理阶段
     sr->write_event_handler = ngx_http_handler;
 
-    // ?设置连接的request为子请求。这里的意思是如果父请求设置第二个子请求的话，这里就不需要设置连接的request了
+    /* ?设置连接的request为子请求。这里的意思是如果父请求设置第二个子请求的话，这里就不需要设置连接的request了
+     * c->data 存放了当前可以在connection上往客户端发送响应的请求
+     * */
     if (c->data == r && r->postponed == NULL) {
         c->data = sr;
     }
 
+
+    /* 默认共享父请求的变量，当然你也可以根据需求在创建完子请求后，再创建子请求独立的变量集 */
     sr->variables = r->variables;
 
     sr->log_handler = r->log_handler;
@@ -2569,6 +2580,7 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
     pr->next = NULL;
 
 
+    /* 把该子请求挂载在其父请求的postponed链表的队尾 */
     if (r->postponed) {
         for (p = r->postponed; p->next; p = p->next) { /* void */ }
         p->next = pr;
@@ -2577,8 +2589,10 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
         r->postponed = pr;
     }
 
+    /* 子请求为内部请求，它可以访问internal类型的location */
     sr->internal = 1;
 
+    /* 继承父请求的一些状态 */
     sr->discard_body = r->discard_body;
     sr->expect_tested = 1;
     sr->main_filter_need_in_memory = r->main_filter_need_in_memory;
@@ -2593,6 +2607,8 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
     sr->start_sec = tp->sec;
     sr->start_msec = tp->msec;
 
+    /* 增加主请求的引用数，
+     * 这个字段主要是在ngx_http_finalize_request调用的一些结束请求和连接的函数中使用 */
     r->main->count++;
 
     *psr = sr;
@@ -2610,7 +2626,7 @@ ngx_http_subrequest(ngx_http_request_t *r,  // 当前请求，将成为子请求
         ngx_http_update_location_config(sr);
     }
 
-    // 放入main的posted_request
+    /* 将该子请求挂载在主请求的posted_requests链表队尾 */
     return ngx_http_post_request(sr, NULL);
 }
 

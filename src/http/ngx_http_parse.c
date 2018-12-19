@@ -134,6 +134,7 @@ ngx_http_parse_request_line(ngx_http_request_t *r, ngx_buf_t *b)
         sw_almost_done
     } state;
 
+    /* 已默认初始化为0 */
     state = r->state;
 
     for (p = b->pos; p < b->last; p++) {
@@ -145,12 +146,13 @@ ngx_http_parse_request_line(ngx_http_request_t *r, ngx_buf_t *b)
         case sw_start:
             r->request_start = p;
 
+            /* 如果是换行符, 继续读 */
             if (ch == CR || ch == LF) {
                 break;
             }
 
             if ((ch < 'A' || ch > 'Z') && ch != '_' && ch != '-') {
-                return NGX_HTTP_PARSE_INVALID_METHOD;
+                return NGX_HTTP_PARSE_INVALID_METHOD;   // 10
             }
 
             state = sw_method;

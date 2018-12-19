@@ -4,4 +4,6 @@ build_dir/*
 !build_dir/conf/
 tags
 cscope.out
+cscope.in.out
+cscope.po.out
 

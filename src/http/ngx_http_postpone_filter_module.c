@@ -64,7 +64,9 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "http postpone filter \"%V?%V\" %p", &r->uri, &r->args, in);
-    // 如果r不等于c->data,前面的分析知道c->data保存的是最新的一个sub request(同级的话，是第一个),因此不等于则说明是需要保存数据的父request
+
+    /* 当前请求不能往out chain发送数据，如果产生了数据，新建一个节点，
+     * 将它保存在当前请求的postponed队尾。这样就保证了数据按序发到客户端 */
     if (r != c->data) {
 
         if (in) {
@@ -83,7 +85,8 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return NGX_OK;
     }
 
-    // 如果r->postponed为空，则说明是最后一个sub request，也就是最新的那个，因此需要将它先发送出去。
+    /* 到这里，表示当前请求可以往out chain发送数据，如果它的postponed链表中没有子请求，也没有数据，
+     * 则直接发送当前产生的数据in或者继续发送out chain中之前没有发送完成的数据 */
     if (r->postponed == NULL) {
 
         // 如果in存在，则发送出去
@@ -91,20 +94,23 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
             return ngx_http_next_body_filter(r->main, in);
         }
 
+        /* 当前请求没有需要发送的数据 */
         return NGX_OK;
     }
 
-    // 到达这里说明需要发送父请求的数据了
+    /* 到这里说明，当前请求的postponed链表中之前就存在需要处理的节点，则新建一个节点，保存当前产生的数据in，
+     * 并将它插入到postponed队尾 */
     if (in) {
         // 如果有chain，则保存数据
         ngx_http_postpone_filter_add(r, in);
     }
 
-    // 开始遍历postponed request
+    /* 处理postponed链表中的节点 */
     do {
         pr = r->postponed;
 
-        // 如果存在request，则说明这个postponed request是sub request，因此需要将它放到post_request中
+        /* 如果该节点保存的是一个子请求，则将它加到主请求的posted_requests链表中，
+         * 以便下次调用ngx_http_run_posted_requests函数，处理该子节点 */
         if (pr->request) {
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
@@ -113,18 +119,23 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
             r->postponed = pr->next;
 
+            /* 按照后续遍历产生的序列，因为当前请求（节点）有未处理的子请求(节点)，
+             * 必须先处理完改子请求，才能继续处理后面的子节点。
+             * 这里将该子请求设置为可以往out chain发送数据的请求。  */
             c->data = pr->request;
 
-            // 放到post request中
+            /* 将该子请求加入主请求的posted_requests链表 */
             return ngx_http_post_request(pr->request, NULL);
         }
 
+        /* 如果该节点保存的是数据，可以直接处理该节点，将它发送到out chain */
+        /* 如果数据为空，则什么都不要做*/
         if (pr->out == NULL) {
             ngx_log_error(NGX_LOG_ALERT, c->log, 0,
                           "http postpone filter NULL output");
 
         } else {
-            // 说明pr->out不为空，此时需要将保存的父request的数据发送
+            /* 说明数据不为空，此时需要将数据发送 */
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                            "http postpone filter output \"%V?%V\"",
                            &r->uri, &r->args);
