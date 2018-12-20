@@ -808,7 +808,10 @@ ngx_http_handler(ngx_http_request_t *r)
 
     r->connection->log->action = NULL;
 
+    /* 1: 表示请求当前需要做内部跳转
+     * 0: 不需要*/
     if (!r->internal) {
+        /* 设置keep_alive */
         switch (r->headers_in.connection_type) {
         case 0:
             r->keepalive = (r->http_version > NGX_HTTP_VERSION_10);
@@ -825,9 +828,13 @@ ngx_http_handler(ngx_http_request_t *r)
 
         r->lingering_close = (r->headers_in.content_length_n > 0
                               || r->headers_in.chunked);
+        /* 表示从数组最开始执行，遍历所有的阶段 */
         r->phase_handler = 0;
 
     } else {
+        /* 需要重定向，则设置需要调用的phase_handler为server_rewrite_index,
+         * 这意味着，如果需要重定向，则从NGX_HTTP_SERVER_REWRITE_PHASE开始执行；
+         * 这是nginx可以反复重定向的基础 */
         cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
         r->phase_handler = cmcf->phase_engine.server_rewrite_index;
     }
@@ -839,6 +846,9 @@ ngx_http_handler(ngx_http_request_t *r)
     r->gzip_vary = 0;
 #endif
 
+    /* 设置写事件为 ngx_http_core_run_phases, 进入HTTP各个阶段的处理；
+     * 此时，读事件中基本什么也不做；
+     * 这意味着，所有的这些阶段，均发生在往client写数据的过程中*/
     r->write_event_handler = ngx_http_core_run_phases;
     ngx_http_core_run_phases(r);
 }
@@ -855,16 +865,39 @@ ngx_http_core_run_phases(ngx_http_request_t *r)
 
     ph = cmcf->phase_engine.handlers;
 
+    /* 循环执行各个阶段注册的处理函数；
+     * |-----|-----|-----|
+     * | 序号 | phase | handler |
+     * |  1   | rewrite | 1_handler |
+     * |  2   | rewrite | 2_handler |
+     * |  3   | content | 1_handler |
+     * 这里直接调用的是checker函数，不允许重新定义的；
+     * 各个阶段可以自定义很多handler，但是一个阶段只允许有1个checker；
+     * 在checker中调用handler
+     * 主要为4大*/
     while (ph[r->phase_handler].checker) {
 
         rc = ph[r->phase_handler].checker(r, &ph[r->phase_handler]);
 
+        /* NGX_OK会立即将控制权交还给nginx主框架，由他根据事件重新调度; 
+         * 在这个过程中，如果没有特别修改write_event_handler, 则为ngx_http_core_run_phases;
+         * 也就是说会在上次结束的地方继续执行;
+         * phase_handler是否已经++，由上次执行的模块决定*/
         if (rc == NGX_OK) {
             return;
         }
     }
 }
-
+/* 核心的checker函数总共有8个
+ * ngx_http_core_generic_phase
+ * ngx_http_core_rewrite_phase
+ * ngx_http_core_find_config_phase
+ * ngx_http_core_post_rewrite_phase
+ * ngx_http_core_access_phase
+ * ngx_http_core_post_access_phase
+ * ngx_http_core_try_files_phase
+ * ngx_http_core_content_phase
+ * */
 
 ngx_int_t
 ngx_http_core_generic_phase(ngx_http_request_t *r, ngx_http_phase_handler_t *ph)

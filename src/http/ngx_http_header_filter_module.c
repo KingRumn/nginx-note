@@ -168,20 +168,25 @@ ngx_http_header_filter(ngx_http_request_t *r)
     ngx_http_core_srv_conf_t  *cscf;
     u_char                     addr[NGX_SOCKADDR_STRLEN];
 
+    /* 0: 请求头仍未发送完成
+     * 1: 已经执行过发送, 此时可能已经交给ngx_http_write方法 */
     if (r->header_sent) {
         return NGX_OK;
     }
 
     r->header_sent = 1;
 
+    /* 子请求不存在发送响应头的概念直接返回NGX_OK */
     if (r != r->main) {
         return NGX_OK;
     }
 
+    /* 版本<1.0，不需头部 */
     if (r->http_version < NGX_HTTP_VERSION_10) {
         return NGX_OK;
     }
 
+    /* 只请求头部时，置header_only, 包体不需要发送 */
     if (r->method == NGX_HTTP_HEAD) {
         r->header_only = 1;
     }
@@ -196,11 +201,12 @@ ngx_http_header_filter(ngx_http_request_t *r)
         }
     }
 
+    /* 计算响应头的长度 */
     len = sizeof("HTTP/1.x ") - 1 + sizeof(CRLF) - 1
           /* the end of the header */
           + sizeof(CRLF) - 1;
 
-    /* status line */
+    /* status line: 200 OK */
 
     if (r->headers_out.status_line.len) {
         len += r->headers_out.status_line.len;
@@ -278,6 +284,7 @@ ngx_http_header_filter(ngx_http_request_t *r)
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
+    /* server */
     if (r->headers_out.server == NULL) {
         if (clcf->server_tokens == NGX_HTTP_SERVER_TOKENS_ON) {
             len += sizeof(ngx_http_server_full_string) - 1;
@@ -290,10 +297,12 @@ ngx_http_header_filter(ngx_http_request_t *r)
         }
     }
 
+    /* data */
     if (r->headers_out.date == NULL) {
         len += sizeof("Date: Mon, 28 Sep 1970 06:00:00 GMT" CRLF) - 1;
     }
 
+    /* Content-Type */
     if (r->headers_out.content_type.len) {
         len += sizeof("Content-Type: ") - 1
                + r->headers_out.content_type.len + 2;
@@ -305,6 +314,7 @@ ngx_http_header_filter(ngx_http_request_t *r)
         }
     }
 
+    /* Contet-Length: 需要判断，可能是chuncked-encoding */
     if (r->headers_out.content_length == NULL
         && r->headers_out.content_length_n >= 0)
     {
@@ -319,6 +329,7 @@ ngx_http_header_filter(ngx_http_request_t *r)
 
     c = r->connection;
 
+    /* 302 需要location字段*/
     if (r->headers_out.location
         && r->headers_out.location->value.len
         && r->headers_out.location->value.data[0] == '/'
@@ -374,6 +385,7 @@ ngx_http_header_filter(ngx_http_request_t *r)
         len += sizeof("Transfer-Encoding: chunked" CRLF) - 1;
     }
 
+    /* Connection */
     if (r->headers_out.status == NGX_HTTP_SWITCHING_PROTOCOLS) {
         len += sizeof("Connection: upgrade" CRLF) - 1;
 
@@ -430,6 +442,7 @@ ngx_http_header_filter(ngx_http_request_t *r)
                + sizeof(CRLF) - 1;
     }
 
+    /* 创建空间 */
     b = ngx_create_temp_buf(r->pool, len);
     if (b == NULL) {
         return NGX_ERROR;
@@ -607,15 +620,20 @@ ngx_http_header_filter(ngx_http_request_t *r)
     /* the end of HTTP header */
     *b->last++ = CR; *b->last++ = LF;
 
+    /* response头部大小 */
     r->header_size = b->last - b->pos;
 
     if (r->header_only) {
         b->last_buf = 1;
     }
 
+    /* out在ngx_http_header_filter创建 */
     out.buf = b;
     out.next = NULL;
 
+    /* headers_filter模块是最后一个模块，到这里，所有的头部都已经准备好需要发送了；
+     * 这也是sub_filter模块为什么需要清除content-length字段的原因:替换发生在body_filter中，此时头部已经发送完毕；
+     * 主动调用发送接口将头部发送 */
     return ngx_http_write_filter(r, &out);
 }
 

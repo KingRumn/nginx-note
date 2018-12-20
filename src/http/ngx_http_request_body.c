@@ -125,9 +125,12 @@ ngx_http_read_client_request_body(ngx_http_request_t *r,
 
             rb->buf = b;
 
+            /* 设置读事件， 用于多次接收包体 */
             r->read_event_handler = ngx_http_read_client_request_body_handler;
             r->write_event_handler = ngx_http_request_empty_handler;
 
+            /* ngx_http_read_client_request_body_handler与ngx_http_read_client_request_body
+             * 相同的部分，用于接收包体*/
             rc = ngx_http_do_read_client_request_body(r);
             goto done;
         }
@@ -289,6 +292,7 @@ ngx_http_do_read_client_request_body(ngx_http_request_t *r)
                     out.buf = rb->buf;
                     out.next = NULL;
 
+                    /* 一些针对包体的处理方法 */
                     rc = ngx_http_request_body_filter(r, &out);
 
                     if (rc != NGX_OK) {
@@ -417,6 +421,7 @@ ngx_http_do_read_client_request_body(ngx_http_request_t *r)
     }
 
     if (!r->request_body_no_buffering) {
+        /* 重写读事件，阻塞读事件 */
         r->read_event_handler = ngx_http_block_reading;
         rb->post_handler(r);
     }

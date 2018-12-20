@@ -1039,6 +1039,8 @@ ngx_http_process_request_line(ngx_event_t *rev)
 
             c->log->action = "reading client request headers";
 
+            /* 设置读handler为 ngx_http_process_request_headers,
+             * 处理头部 */
             rev->handler = ngx_http_process_request_headers;
             ngx_http_process_request_headers(rev);
 
@@ -1197,6 +1199,7 @@ ngx_http_process_request_uri(ngx_http_request_t *r)
 }
 
 
+/* 处理http头部 */
 static void
 ngx_http_process_request_headers(ngx_event_t *rev)
 {
@@ -1354,12 +1357,14 @@ ngx_http_process_request_headers(ngx_event_t *rev)
 
             r->http_state = NGX_HTTP_PROCESS_REQUEST_STATE;
 
+            /* 头部处理完成后，立即调用, 对读取的头部进行检查及补充处理 */
             rc = ngx_http_process_request_header(r);
 
             if (rc != NGX_OK) {
                 return;
             }
 
+            /* 直接调用ngx_http_process_request进入包体处理 */
             ngx_http_process_request(r);
 
             return;
@@ -1382,7 +1387,7 @@ ngx_http_process_request_headers(ngx_event_t *rev)
     }
 }
 
-
+/* 处理首行和头部阶段读取socket数据 */
 static ssize_t
 ngx_http_read_request_header(ngx_http_request_t *r)
 {
@@ -1787,10 +1792,11 @@ ngx_http_process_multi_header_lines(ngx_http_request_t *r, ngx_table_elt_t *h,
     return NGX_OK;
 }
 
-
+/* 对读取的头部进行检查及补充处理 */
 ngx_int_t
 ngx_http_process_request_header(ngx_http_request_t *r)
 {
+    /* 找到对应的虚拟主机 */
     if (r->headers_in.server.len == 0
         && ngx_http_set_virtual_server(r, &r->headers_in.server)
            == NGX_ERROR)
@@ -1798,6 +1804,7 @@ ngx_http_process_request_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    /* 如果是1.1，则HOST字段不可为空 */
     if (r->headers_in.host == NULL && r->http_version > NGX_HTTP_VERSION_10) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                    "client sent HTTP/1.1 request without \"Host\" header");
@@ -1805,8 +1812,10 @@ ngx_http_process_request_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    /* 如果传递了content_length, 其必须为合法的数字 */
     if (r->headers_in.content_length) {
         r->headers_in.content_length_n =
+                            /* string--> off_t */
                             ngx_atoof(r->headers_in.content_length->value.data,
                                       r->headers_in.content_length->value.len);
 
@@ -1825,6 +1834,8 @@ ngx_http_process_request_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    /* 请求数据也可能通过chunked方式传送，此时chunked标记被置，同时content_len置空
+     * */
     if (r->headers_in.transfer_encoding) {
         if (r->headers_in.transfer_encoding->value.len == 7
             && ngx_strncasecmp(r->headers_in.transfer_encoding->value.data,
@@ -1849,6 +1860,7 @@ ngx_http_process_request_header(ngx_http_request_t *r)
     if (r->headers_in.connection_type == NGX_HTTP_CONNECTION_KEEP_ALIVE) {
         if (r->headers_in.keep_alive) {
             r->headers_in.keep_alive_n =
+                            /* string-->time_t */
                             ngx_atotm(r->headers_in.keep_alive->value.data,
                                       r->headers_in.keep_alive->value.len);
         }
@@ -1933,12 +1945,20 @@ ngx_http_process_request(ngx_http_request_t *r)
     r->stat_writing = 1;
 #endif
 
+    /* socket的读写事件均设置为ngx_http_request_handler
+     * 主要作用就是调用r的read/write_event_handler,
+     * 回调中同事会调用ngx_http_run_posted_requests,从而处理子请求
+     * */
     c->read->handler = ngx_http_request_handler;
     c->write->handler = ngx_http_request_handler;
+    /* 这个读事件处理，在ngx_http_request_handler中直接调用 */
     r->read_event_handler = ngx_http_block_reading;
 
+    /* 设置写事件处理为ngx_http_core_run_phases，进入HTTP各阶段的处理*/
     ngx_http_handler(r);
 
+    /* 事件有可能来自子请求，进行子请求的处理，
+     * 主要是调用子请求中设置的write_event_handler */
     ngx_http_run_posted_requests(c);
 }
 
@@ -2070,6 +2090,7 @@ ngx_http_set_virtual_server(ngx_http_request_t *r, ngx_str_t *host)
 
 #endif
 
+    /* 查找对应的虚拟主机  */
     rc = ngx_http_find_virtual_server(r->connection,
                                       hc->addr_conf->virtual_names,
                                       host, r, &cscf);
@@ -2202,7 +2223,8 @@ ngx_http_find_virtual_server(ngx_connection_t *c,
     return NGX_DECLINED;
 }
 
-
+/* 调用调用request中的读写事件，
+ * 调用posted_requests*/
 static void
 ngx_http_request_handler(ngx_event_t *ev)
 {
@@ -2222,6 +2244,7 @@ ngx_http_request_handler(ngx_event_t *ev)
         ev->timedout = 0;
     }
 
+    /* 直接调用request中的write_event_handler, read_event_handler */
     if (ev->write) {
         r->write_event_handler(r);
 
@@ -2229,6 +2252,7 @@ ngx_http_request_handler(ngx_event_t *ev)
         r->read_event_handler(r);
     }
 
+    /* 每次读写事件都会执行，从而将子请求的数据和请求进行处理 */
     ngx_http_run_posted_requests(c);
 }
 
@@ -2674,6 +2698,9 @@ ngx_http_writer(ngx_http_request_t *r)
 
     clcf = ngx_http_get_module_loc_conf(r->main, ngx_http_core_module);
 
+    /* 写超时，原因有二：
+     * 1. 网络异常或客户端长时间不接受响应，真正发送响应超时；
+     * 2. limit_rate线束，会设置超时时间，此时并非真正超时，而是限速所致 */
     if (wev->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
                       "client timed out");
@@ -2683,6 +2710,7 @@ ngx_http_writer(ngx_http_request_t *r)
         return;
     }
 
+    /*  */
     if (wev->delayed || r->aio) {
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, wev->log, 0,
                        "http writer delayed");
@@ -2709,6 +2737,7 @@ ngx_http_writer(ngx_http_request_t *r)
         return;
     }
 
+    /* 任意一个不为0，都说明有数据没有发完 */
     if (r->buffered || r->postponed || (r == r->main && c->buffered)) {
 
         if (!wev->delayed) {
@@ -2725,6 +2754,8 @@ ngx_http_writer(ngx_http_request_t *r)
     ngx_log_debug2(NGX_LOG_DEBUG_HTTP, wev->log, 0,
                    "http writer done: \"%V?%V\"", &r->uri, &r->args);
 
+    /* 此时，所有的数据都已经发送完毕，
+     * 将写事件handler设置为空，即阻塞，并结束请求 */
     r->write_event_handler = ngx_http_request_empty_handler;
 
     ngx_http_finalize_request(r, rc);
@@ -2741,6 +2772,7 @@ ngx_http_request_finalizer(ngx_http_request_t *r)
 }
 
 
+/* 啥都没干 */
 void
 ngx_http_block_reading(ngx_http_request_t *r)
 {

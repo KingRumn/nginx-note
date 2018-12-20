@@ -265,6 +265,8 @@ ngx_http_sub_header_filter(ngx_http_request_t *r)
 
     r->filter_need_in_memory = 1;
 
+    /* 这种替换会强制清除掉 content-length字段;
+     * 在这里无法算出到底需要替换多少内容 */
     if (r == r->main) {
         ngx_http_clear_content_length(r);
 

@@ -64,10 +64,14 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
     flush = 0;
     sync = 0;
     last = 0;
+    /* header的out并没有放在r中，通过直接调用进行的;
+     * header_filter调用的时候，body_filter还没有开始执行；
+     * 可以认为此时的r->out还是空的 */
     ll = &r->out;
 
-    /* find the size, the flush point and the last link of the saved chain */
 
+    /* find the size, the flush point and the last link of the saved chain */
+    /* 遍历out, 计算 */
     for (cl = r->out; cl; cl = cl->next) {
         ll = &cl->next;
 
@@ -125,6 +129,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
         cl->buf = ln->buf;
         *ll = cl;
+        /* 将in放入out的后面 */
         ll = &cl->next;
 
         ngx_log_debug7(NGX_LOG_DEBUG_EVENT, c->log, 0,
@@ -137,6 +142,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
                        cl->buf->file_last - cl->buf->file_pos);
 
 #if 1
+        /* ngx_buf_special? */
         if (ngx_buf_size(cl->buf) == 0 && !ngx_buf_special(cl->buf)) {
             ngx_log_error(NGX_LOG_ALERT, c->log, 0,
                           "zero size buf in writer "
@@ -156,6 +162,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
         }
 #endif
 
+        /* 更新大小 */
         size += ngx_buf_size(cl->buf);
 
         if (cl->buf->flush || cl->buf->recycled) {
@@ -171,6 +178,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
         }
     }
 
+    /* 结尾 */
     *ll = NULL;
 
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, c->log, 0,
@@ -184,15 +192,23 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
      * is smaller than "postpone_output" directive
      */
 
+
+    /* postpone_output?
+     * last/flush/in同时为0， 待发送的out链中没有一个缓冲区，
+     * 表示响应已经结束，或者需要立刻发送出去 */
     if (!last && !flush && in && size < (off_t) clcf->postpone_output) {
         return NGX_OK;
     }
 
+    /* 1: 此次epoll调度中请求需要减速，不应该发送响应
+     * 0: 不需要减速 */
     if (c->write->delayed) {
+        /* 放入 NGX_HTTP_WRITE_BUFFERED宏，表示out缓冲区中还有响应等待发送 */
         c->buffered |= NGX_HTTP_WRITE_BUFFERED;
         return NGX_AGAIN;
     }
 
+    /* ? */
     if (size == 0
         && !(c->buffered & NGX_LOWLEVEL_BUFFERED)
         && !(last && c->need_last_buf))
@@ -218,6 +234,9 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return NGX_ERROR;
     }
 
+    /* limit_rate: >0: 响应限速
+     * 表示每秒可以发送的字节数，超过这个字节数就需要限速；
+     * 但是需要在发送了limit_rate_after字节的响应后才生效*/
     if (r->limit_rate) {
         if (r->limit_rate_after == 0) {
             r->limit_rate_after = clcf->limit_rate_after;
@@ -227,6 +246,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
                 - (c->sent - r->limit_rate_after);
 
         if (limit <= 0) {
+            /* 超过限制，不发送 */
             c->write->delayed = 1;
             delay = (ngx_msec_t) (- limit * 1000 / r->limit_rate + 1);
             ngx_add_timer(c->write, delay);
@@ -236,6 +256,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
             return NGX_AGAIN;
         }
 
+        /* 发送文件时,每个块的限制 */
         if (clcf->sendfile_max_chunk
             && (off_t) clcf->sendfile_max_chunk < limit)
         {
@@ -251,6 +272,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "http write filter limit %O", limit);
 
+    /* 发送, 这里应该返回下一个待发送的chain */
     chain = c->send_chain(c, r->out, limit);
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
@@ -278,10 +300,12 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
             }
         }
 
+        /* 计算需要经过多少ms后才可以继续发送 */
         delay = (ngx_msec_t) ((nsent - sent) * 1000 / r->limit_rate);
 
         if (delay > 0) {
             limit = 0;
+            /* 设置定时器，并声明delay */
             c->write->delayed = 1;
             ngx_add_timer(c->write, delay);
         }
@@ -295,6 +319,7 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
         ngx_add_timer(c->write, 1);
     }
 
+    /* 释放已经发送的缓冲区 */
     for (cl = r->out; cl && cl != chain; /* void */) {
         ln = cl;
         cl = cl->next;
@@ -308,12 +333,16 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return NGX_AGAIN;
     }
 
+    /* chain为空，表明此时已经发送完毕，
+     * 取消 NGX_HTTP_WRITE_BUFFERED标志，*/
     c->buffered &= ~NGX_HTTP_WRITE_BUFFERED;
 
+    /* ? */
     if ((c->buffered & NGX_LOWLEVEL_BUFFERED) && r->postponed == NULL) {
         return NGX_AGAIN;
     }
 
+    /* 如何调用ngx_http_writer进行异步发送? */
     return NGX_OK;
 }
 
