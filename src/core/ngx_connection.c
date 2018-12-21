@@ -1108,6 +1108,7 @@ ngx_free_connection(ngx_connection_t *c)
 }
 
 
+/* 关闭连接的过程 */
 void
 ngx_close_connection(ngx_connection_t *c)
 {
@@ -1120,6 +1121,7 @@ ngx_close_connection(ngx_connection_t *c)
         return;
     }
 
+    /* 删除读写定时器 */
     if (c->read->timer_set) {
         ngx_del_timer(c->read);
     }
@@ -1129,6 +1131,7 @@ ngx_close_connection(ngx_connection_t *c)
     }
 
     if (!c->shared) {
+        /* 将读写事件从epoll中移除 */
         if (ngx_del_conn) {
             ngx_del_conn(c, NGX_CLOSE_EVENT);
 
@@ -1143,6 +1146,7 @@ ngx_close_connection(ngx_connection_t *c)
         }
     }
 
+    /* 移除post事件队列中的事件 */
     if (c->read->posted) {
         ngx_delete_posted_event(c->read);
     }
@@ -1158,6 +1162,7 @@ ngx_close_connection(ngx_connection_t *c)
 
     log_error = c->log_error;
 
+    /* 将连接结构体归还给ngx_cycle_t核心结构体的空闲连接池free_connections */
     ngx_free_connection(c);
 
     fd = c->fd;
@@ -1167,6 +1172,7 @@ ngx_close_connection(ngx_connection_t *c)
         return;
     }
 
+    /* 调用close方法关闭socket */
     if (ngx_close_socket(fd) == -1) {
 
         err = ngx_socket_errno;

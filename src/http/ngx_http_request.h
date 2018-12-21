@@ -348,7 +348,7 @@ struct ngx_http_postponed_request_s {
      * 还有保存该请求自己产生的数据的节点
      * */
     ngx_http_request_t               *request;  //子请求
-    ngx_chain_t                      *out;      //需要发送的数据
+    ngx_chain_t                      *out;      //当前请求产生的数据
     ngx_http_postponed_request_t     *next;     //下一个postponed请求
 };
 
