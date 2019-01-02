@@ -848,6 +848,8 @@ ngx_http_proxy_handler(ngx_http_request_t *r)
     ngx_http_proxy_main_conf_t  *pmcf;
 #endif
 
+    /* 默认情况下请求的upstream成员只是NULL空指针，
+     * 在设置upstream之前需要首先从内存池中创建ngx_http_upstream_t结构体 */
     if (ngx_http_upstream_create(r) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
@@ -887,10 +889,15 @@ ngx_http_proxy_handler(ngx_http_request_t *r)
     u->create_key = ngx_http_proxy_create_key;
 #endif
 
+    /* 创建请求 */
     u->create_request = ngx_http_proxy_create_request;
+    /* 重试请求 */
     u->reinit_request = ngx_http_proxy_reinit_request;
+    /* 处理头部 */
     u->process_header = ngx_http_proxy_process_status_line;
+    /* 无意义 */
     u->abort_request = ngx_http_proxy_abort_request;
+    /* 结束请求 */
     u->finalize_request = ngx_http_proxy_finalize_request;
     r->state = 0;
 
@@ -909,10 +916,13 @@ ngx_http_proxy_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    /* 利用pipe转发响应时的处理方法 */
     u->pipe->input_filter = ngx_http_proxy_copy_filter;
     u->pipe->input_ctx = r;
 
+    /* 处理包体前的初始化方法 */
     u->input_filter_init = ngx_http_proxy_input_filter_init;
+    /* 处理包体的方法 */
     u->input_filter = ngx_http_proxy_non_buffered_copy_filter;
     u->input_filter_ctx = r;
 
@@ -926,6 +936,7 @@ ngx_http_proxy_handler(ngx_http_request_t *r)
         r->request_body_no_buffering = 1;
     }
 
+    /* 读取请求包体，并初始化upstream */
     rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
 
     if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {

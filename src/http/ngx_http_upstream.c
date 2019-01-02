@@ -463,6 +463,7 @@ ngx_conf_bitmask_t  ngx_http_upstream_ignore_headers_masks[] = {
 };
 
 
+/* 仅创建结构体，成员还需要自己设置 */
 ngx_int_t
 ngx_http_upstream_create(ngx_http_request_t *r)
 {
@@ -495,7 +496,7 @@ ngx_http_upstream_create(ngx_http_request_t *r)
     return NGX_OK;
 }
 
-
+/* 依据ngx_http_upstream_conf_t成员初始化upstream */
 void
 ngx_http_upstream_init(ngx_http_request_t *r)
 {
@@ -513,6 +514,7 @@ ngx_http_upstream_init(ngx_http_request_t *r)
     }
 #endif
 
+    /* 将客户端连接的读事件由定时器中移除 */
     if (c->read->timer_set) {
         ngx_del_timer(c->read);
     }
@@ -532,7 +534,7 @@ ngx_http_upstream_init(ngx_http_request_t *r)
     ngx_http_upstream_init_request(r);
 }
 
-
+/* ngx_http_upstream_init中的共性部分 */
 static void
 ngx_http_upstream_init_request(ngx_http_request_t *r)
 {
@@ -597,15 +599,18 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
 
     u->store = u->conf->store;
 
+    /* 检查与下游客户端之间的连接状态, 如果有问题，则立即终止连接 */
     if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
         r->read_event_handler = ngx_http_upstream_rd_check_broken_connection;
         r->write_event_handler = ngx_http_upstream_wr_check_broken_connection;
     }
 
+    /* 请求有包体需要转发，指针初始化 */
     if (r->request_body) {
         u->request_bufs = r->request_body->bufs;
     }
 
+    /* 调用create方法，构造请求 */
     if (u->create_request(r) != NGX_OK) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
@@ -651,6 +656,7 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
         ngx_memzero(u->state, sizeof(ngx_http_upstream_state_t));
     }
 
+    /* 增加清理资源的方法 */
     cln = ngx_http_cleanup_add(r, 0);
     if (cln == NULL) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
@@ -787,6 +793,7 @@ found:
         u->peer.tries = u->conf->next_upstream_tries;
     }
 
+    /* 调用connect向上建立连接 */
     ngx_http_upstream_connect(r, u);
 }
 
@@ -1457,6 +1464,7 @@ ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
 }
 
 
+/* 采用非阻塞的方法建立连接，函数返回时连接不一定建立成功 */
 static void
 ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
 {
@@ -2186,6 +2194,7 @@ ngx_http_upstream_read_request_handler(ngx_http_request_t *r)
 }
 
 
+/* upstream处理包头: 接收，并初始化list */
 static void
 ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
 {
@@ -2211,6 +2220,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
     }
 
     if (u->buffer.start == NULL) {
+        /* 分配buffer_size大小的buffer，用于存放响应 */
         u->buffer.start = ngx_palloc(r->pool, u->conf->buffer_size);
         if (u->buffer.start == NULL) {
             ngx_http_upstream_finalize_request(r, u,
@@ -2245,6 +2255,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
 
     for ( ;; ) {
 
+        /* 循环接收，并调用process_header处理包头 */
         n = c->recv(c, u->buffer.last, u->buffer.end - u->buffer.last);
 
         if (n == NGX_AGAIN) {
@@ -2330,6 +2341,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
         return;
     }
 
+    /* 不需要缓存，直接转发到下游 */
     if (!r->subrequest_in_memory) {
         ngx_http_upstream_send_response(r, u);
         return;
@@ -2741,6 +2753,7 @@ ngx_http_upstream_process_headers(ngx_http_request_t *r, ngx_http_upstream_t *u)
 }
 
 
+/* 接收包体 */
 static void
 ngx_http_upstream_process_body_in_memory(ngx_http_request_t *r,
     ngx_http_upstream_t *u)
@@ -2790,6 +2803,7 @@ ngx_http_upstream_process_body_in_memory(ngx_http_request_t *r,
         u->state->bytes_received += n;
         u->state->response_length += n;
 
+        /* 调用input_filter */
         if (u->input_filter(u->input_filter_ctx, n) == NGX_ERROR) {
             ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
             return;
@@ -3634,6 +3648,7 @@ ngx_http_upstream_non_buffered_filter_init(void *data)
     return NGX_OK;
 }
 
+/* 处理响应包体 */
 
 static ngx_int_t
 ngx_http_upstream_non_buffered_filter(void *data, ssize_t bytes)
@@ -4339,6 +4354,7 @@ ngx_http_upstream_finalize_request(ngx_http_request_t *r,
     if (r->subrequest_in_memory
         && u->headers_in.status_n >= NGX_HTTP_SPECIAL_RESPONSE)
     {
+        /* 不存储包体 */
         u->buffer.last = u->buffer.pos;
     }
 
