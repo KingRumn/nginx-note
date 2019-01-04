@@ -3341,6 +3341,13 @@ ngx_http_proxy_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     if (clcf->lmt_excpt && clcf->handler == NULL
         && (conf->upstream.upstream || conf->proxy_lengths))
     {
+        /* 设置proxy_pass的处理函数为ngx_http_proxy_handler，
+         * 该handler会在ngx_http_core_find_config_phase阶段设置到content_handler中，
+         * 并在ngx_http_core_content_phase阶段得到优先执行；
+         * 这就是content phase阶段的第二种介入方式；
+         * 在这种情况下，第一种方式在该阶段设置的所有方法均不可用
+         * */
+
         clcf->handler = ngx_http_proxy_handler;
     }
 

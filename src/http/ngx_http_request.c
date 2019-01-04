@@ -2351,7 +2351,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
 
     if (rc == NGX_DECLINED) {
         /* 说明还需要按照11个阶段继续处理下去，
-         * 设置写事件为ngx_http_core_run_phase，并调用之继续处理
+         * 设置写事件为ngx_http_core_run_phases，并调用之继续处理
          * content_handler赋NULL可以让NGX_HTTP_CONTENT_PHASE阶段注册的其他方法得以执行
          * */
         r->content_handler = NULL;

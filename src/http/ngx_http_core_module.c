@@ -874,12 +874,12 @@ ngx_http_core_run_phases(ngx_http_request_t *r)
      * 这里直接调用的是checker函数，不允许重新定义的；
      * 各个阶段可以自定义很多handler，但是一个阶段只允许有1个checker；
      * 在checker中调用handler
-     * 主要为4大*/
+     * */
     while (ph[r->phase_handler].checker) {
 
         rc = ph[r->phase_handler].checker(r, &ph[r->phase_handler]);
 
-        /* NGX_OK会立即将控制权交还给nginx主框架，由他根据事件重新调度; 
+        /* NGX_OK会立即将控制权交还给nginx主框架，由他根据事件重新调度;
          * 在这个过程中，如果没有特别修改write_event_handler, 则为ngx_http_core_run_phases;
          * 也就是说会在上次结束的地方继续执行;
          * phase_handler是否已经++，由上次执行的模块决定*/
@@ -1414,6 +1414,7 @@ ngx_http_core_content_phase(ngx_http_request_t *r,
     ngx_int_t  rc;
     ngx_str_t  path;
 
+    /* 此处一旦设置了content_handler, 则不再按照数组遍历执行该阶段的其他handler */
     if (r->content_handler) {
         r->write_event_handler = ngx_http_request_empty_handler;
         ngx_http_finalize_request(r, r->content_handler(r));
