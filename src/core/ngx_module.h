@@ -220,19 +220,42 @@
 
 
 struct ngx_module_s {
+    /* NGX_MODULE_UNSET_INDEX
+     * 对于一类（如NGX_HTTP_MODULE）模块，表示当前模块在这类模块中的序号；
+     * 通常由管理这类模块的一个Nginx核心模块设置；
+     * 对所有的HTTP模块而言，ctx_index是由核心模块ngx_http_module设置。
+     * ctx_index非常重要，Nginx模块化设计非常依赖于各个模块的顺序，
+     * 既用于表达优先级，也用于表明每个模块的位置；
+     * 借以帮助Nginx框架快速获得某个模块的数据
+     * */
     ngx_uint_t            ctx_index;
+    /* NGX_MODULE_UNSET_INDEX
+     * 表示当前模块在ngx_modules数组中的序号。
+     * ctx_index表示在某一类模块中的序号，
+     * index表示在所有模块中的序号。
+     * nginx启动时，会依据ngx_modules数组设置各模块index的值 */
     ngx_uint_t            index;
 
+    /* NULL, name是通过config文件或option文件在编译前指定;
+     * 有什么用??
+     * 1. 识别，log时会输出 */
     char                 *name;
 
+    /* 0,0, 未用到 */
     ngx_uint_t            spare0;
     ngx_uint_t            spare1;
 
+    /* nginx_version, ngx版本 */
     ngx_uint_t            version;
     const char           *signature;
 
     void                 *ctx;
     ngx_command_t        *commands;
+    /* 模块类型
+     * 在官方nginx中，取值范围有以下5种：
+     * NGX_HTTP_MODULE NGX_CORE_MODULE NGX_CONF_MODULE
+     * NGX_EVENT_MODULE NGX_MAIL_MODULE
+     * 实际上，是可以定义新的模块类型的 */
     ngx_uint_t            type;
 
     ngx_int_t           (*init_master)(ngx_log_t *log);

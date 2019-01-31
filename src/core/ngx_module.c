@@ -19,9 +19,16 @@ static ngx_uint_t ngx_module_ctx_index(ngx_cycle_t *cycle, ngx_uint_t type,
 
 
 ngx_uint_t         ngx_max_module;
+
+/* 当前已经加载的模块，
+ * */
 static ngx_uint_t  ngx_modules_n;
 
 
+/* 为初始化做准备
+ * 设置index为ngx_modules数组的序号，从0开始
+ * 设置name为ngx_modules_names中的名字，这就要求2个数组必须一一对应，否则会有问题；
+ * */
 ngx_int_t
 ngx_preinit_modules(void)
 {
@@ -78,14 +85,18 @@ ngx_init_modules(ngx_cycle_t *cycle)
     return NGX_OK;
 }
 
-
+/* 按照顺序设置ctx_index, 并返回最大值+1
+ * */
 ngx_int_t
 ngx_count_modules(ngx_cycle_t *cycle, ngx_uint_t type)
 {
     ngx_uint_t     i, next, max;
     ngx_module_t  *module;
 
+    /* 下一个空闲的index */
     next = 0;
+
+    /* 最大的index */
     max = 0;
 
     /* count appropriate modules, set up their indices */
@@ -97,6 +108,7 @@ ngx_count_modules(ngx_cycle_t *cycle, ngx_uint_t type)
             continue;
         }
 
+        /* 所有的模块index都被默认初始化为NGX_MODULE_UNSET_INDEX */
         if (module->ctx_index != NGX_MODULE_UNSET_INDEX) {
 
             /* if ctx_index was assigned, preserve it */
@@ -114,8 +126,10 @@ ngx_count_modules(ngx_cycle_t *cycle, ngx_uint_t type)
 
         /* search for some free index */
 
+        /* 判断next是否可用，如果不可用，找到下一个可用的index并返回 */
         module->ctx_index = ngx_module_ctx_index(cycle, type, next);
 
+        /* 更新max/next */
         if (module->ctx_index > max) {
             max = module->ctx_index;
         }
@@ -128,7 +142,7 @@ ngx_count_modules(ngx_cycle_t *cycle, ngx_uint_t type)
      * cycle as well, else there will be problems if the number
      * will be stored in a global variable (as it's used to be)
      * and we'll have to roll back to the previous cycle
-     */
+     * ?? */
 
     if (cycle->old_cycle && cycle->old_cycle->modules) {
 
@@ -328,10 +342,12 @@ again:
     for (i = 0; cycle->modules[i]; i++) {
         module = cycle->modules[i];
 
+        /* 只关心同类型 */
         if (module->type != type) {
             continue;
         }
 
+        /* 该index已被占用，++ */
         if (module->ctx_index == index) {
             index++;
             goto again;
@@ -339,7 +355,7 @@ again:
     }
 
     /* check previous cycle */
-
+    /* old_cycle需要进一步理解??*/
     if (cycle->old_cycle && cycle->old_cycle->modules) {
 
         for (i = 0; cycle->old_cycle->modules[i]; i++) {

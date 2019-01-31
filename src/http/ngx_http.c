@@ -115,7 +115,7 @@ ngx_module_t  ngx_http_module = {
     NGX_MODULE_V1_PADDING
 };
 
-
+/* http模块的解析函数，碰到http模块则进行整个http模块、filter模块的初始化 */
 static char *
 ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {

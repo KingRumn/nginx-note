@@ -179,6 +179,7 @@ ngx_http_sub_header_filter(ngx_http_request_t *r)
 
     slcf = ngx_http_get_module_loc_conf(r, ngx_http_sub_filter_module);
 
+    /* 不需要执行替换的项目 */
     if (slcf->pairs == NULL
         || r->headers_out.content_length_n == 0
         || ngx_http_test_content_type(r, &slcf->types) == NULL)

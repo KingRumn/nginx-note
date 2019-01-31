@@ -277,6 +277,7 @@ main(int argc, char *const *argv)
         return 1;
     }
 
+    /* 预先初始化 */
     if (ngx_preinit_modules() != NGX_OK) {
         return 1;
     }

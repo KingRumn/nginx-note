@@ -43,7 +43,6 @@ ngx_module_t  ngx_http_write_filter_module = {
     NGX_MODULE_V1_PADDING
 };
 
-
 ngx_int_t
 ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
@@ -56,6 +55,9 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     c = r->connection;
 
+    /* 检查连接上的error标志位，
+     * 非零表示请求出错，直接返回
+     * */
     if (c->error) {
         return NGX_ERROR;
     }
@@ -71,7 +73,8 @@ ngx_http_write_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
 
     /* find the size, the flush point and the last link of the saved chain */
-    /* 遍历out, 计算 */
+    /* 遍历out, 计算等待发送的缓冲区大小;
+     * */
     for (cl = r->out; cl; cl = cl->next) {
         ll = &cl->next;
 
