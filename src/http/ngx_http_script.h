@@ -72,8 +72,11 @@ typedef struct {
 
 
 typedef struct {
+    /* 配置文件结构体 */
     ngx_conf_t                 *cf;
+    /* 原始字符串地址，带$host等变量的字符串， 指向conf中解析出来的字符串地址 */
     ngx_str_t                  *value;
+    /* 存放该结构体的地址 */
     ngx_http_complex_value_t   *complex_value;
 
     unsigned                    zero:1;

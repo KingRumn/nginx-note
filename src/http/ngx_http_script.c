@@ -104,6 +104,9 @@ ngx_http_complex_value(ngx_http_request_t *r, ngx_http_complex_value_t *val,
 }
 
 
+/* 编译解析带变量的配置，常在配置阶段调用,
+ * ccv->cf和cc->value（带变量配置的字符串）为入参
+ * ccv->complex_value 为出参，常保存在xxx_conf_t中。*/
 ngx_int_t
 ngx_http_compile_complex_value(ngx_http_compile_complex_value_t *ccv)
 {
@@ -117,6 +120,7 @@ ngx_http_compile_complex_value(ngx_http_compile_complex_value_t *ccv)
     nv = 0;
     nc = 0;
 
+    /* 计算1-9数字字符和其他字符的个数 */
     for (i = 0; i < v->len; i++) {
         if (v->data[i] == '$') {
             if (v->data[i + 1] >= '1' && v->data[i + 1] <= '9') {
@@ -129,6 +133,7 @@ ngx_http_compile_complex_value(ngx_http_compile_complex_value_t *ccv)
     }
 
     if ((v->len == 0 || v->data[0] != '$')
+            /* 这两个变量什么意思? */
         && (ccv->conf_prefix || ccv->root_prefix))
     {
         if (ngx_conf_full_name(ccv->cf->cycle, v, ccv->conf_prefix) != NGX_OK) {
