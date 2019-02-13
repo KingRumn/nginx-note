@@ -2,6 +2,7 @@
 /*
  * Copyright (C) Igor Sysoev
  * Copyright (C) Nginx, Inc.
+ * Questions:
  */
 
 
@@ -25,10 +26,17 @@ typedef struct {
 
 
 typedef struct {
+    /* 整个tables的最大、最小字符串长度 */
     ngx_uint_t                 min_match_len;
     ngx_uint_t                 max_match_len;
 
+    /* 可得匹配规则排序后，某个字符需要匹配的所有规则；
+     * 例如：
+     * 1. index[a]=2, index[b]=2, 则a字符不需要匹配任何规则
+     * 2. index[a]=1, index[b]=5, 则a字符需要匹配1/2/3/4四条规则
+     * */
     u_char                     index[257];
+    /* 某个字符相对ngx_http_cmp_index位置字符的最小向前偏移量 */
     u_char                     shift[256];
 } ngx_http_sub_tables_t;
 
@@ -43,38 +51,58 @@ typedef struct {
     ngx_hash_t                 types;
 
     ngx_flag_t                 once;
+    /* 是否保留last_modified字段，
+     * 默认情况下，会同时清除content_length、last_modified及etag相关的字段字段
+     * 配置为on的情况下，不会清除last_modified字段，并且etag采用weak模式，前加W/ */
     ngx_flag_t                 last_modified;
 
     ngx_array_t               *types_keys;
+    /* ngx_http_sub_match_t */
     ngx_array_t               *matches;
 } ngx_http_sub_loc_conf_t;
 
 
 typedef struct {
+    /* 部分匹配情况下，最终未匹配时，将looked中的内容放进去，最终发往客户端 */
     ngx_str_t                  saved;
+    /* 部分匹配的情况下，存放上一个buf中已经匹配的部分 */
     ngx_str_t                  looked;
 
     ngx_uint_t                 once;   /* unsigned  once:1 */
 
+    /* 当前需要匹配的buf, 从in中取第一个
+     * */
     ngx_buf_t                 *buf;
 
+    /* 已经对比到当前buf中的位置 */
     u_char                    *pos;
+    /* 标记了当前buf中，在匹配位置以前，需要输出到客户端的内容 */
     u_char                    *copy_start;
     u_char                    *copy_end;
 
+    /* body_filter中out的副本 */
     ngx_chain_t               *in;
+    /* 最终需要发送给客户端的内容 */
     ngx_chain_t               *out;
+    /* 记录out链的结尾位置，如果有内容需要发送，只需要放在这里即可 */
     ngx_chain_t              **last_out;
     ngx_chain_t               *busy;
+    /* 空闲buf列表 */
     ngx_chain_t               *free;
 
+    /* 替换后的内容 */
     ngx_str_t                 *sub;
+    /* 记录了已经应用过的规则个数 */
     ngx_uint_t                 applied;
 
+    /* 相对偏移量 */
     ngx_int_t                  offset;
+    /* 当前进行匹配的规则 */
     ngx_uint_t                 index;
 
+    /* 匹配字符串的长度、shift、index */
     ngx_http_sub_tables_t     *tables;
+    /* 排序后的匹配规则,排序规则为:ngx_http_cmp_index位置上字母顺序 */
     ngx_array_t               *matches;
 } ngx_http_sub_ctx_t;
 
@@ -122,9 +150,8 @@ static ngx_command_t  ngx_http_sub_filter_commands[] = {
       &ngx_http_html_default_types[0] },
 
     /* sub_filter_once on;
-     * 是否只替换一次，
-     * 1. 多条规则时，是否只执行一条
-     * 2. 多个地方匹配同一个目标时，是否只替换第一处 */
+     * 同一条规则只替换一次，
+     * */
     { ngx_string("sub_filter_once"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
       ngx_conf_set_flag_slot,
@@ -133,7 +160,7 @@ static ngx_command_t  ngx_http_sub_filter_commands[] = {
       NULL },
 
     /* sub_filter_last_modified on;
-     * 是否清除last-modified字段 */
+     * 是否保留last-modified字段 */
     { ngx_string("sub_filter_last_modified"),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
       ngx_conf_set_flag_slot,
@@ -210,14 +237,16 @@ ngx_http_sub_header_filter(ngx_http_request_t *r)
 
     /* dynamic字段标记了是否需要在请求处理过程中动态的对替换和被替换的内容进行更新 */
     if (slcf->dynamic == 0) {
-        /* 不需要更新的话，直接采用配置文件的值替换即可 */
+        /* 不需要更新的话，直接采用配置文件的值替换即可;
+         * 在这种情况下，ngx_http_sub_merge_conf的时候，会初始化这些值
+         * */
         ctx->tables = slcf->tables;
         ctx->matches = slcf->matches;
 
     } else {
         /* 如果需要更新，则需要动态获取变量的值,
          * 通常情况下，都是存在变量的,
-         * ?? */
+         * */
         pairs = slcf->pairs->elts;
         n = slcf->pairs->nelts;
 
@@ -274,11 +303,13 @@ ngx_http_sub_header_filter(ngx_http_request_t *r)
      * 如果ctx为空，body_filter不会执行任何操作 */
     ngx_http_set_ctx(r, ctx, ngx_http_sub_filter_module);
 
+    /* 分配空间，最大为max_match_len */
     ctx->saved.data = ngx_pnalloc(r->pool, ctx->tables->max_match_len - 1);
     if (ctx->saved.data == NULL) {
         return NGX_ERROR;
     }
 
+    /* 分配空间，最大为max_match_len */
     ctx->looked.data = ngx_pnalloc(r->pool, ctx->tables->max_match_len - 1);
     if (ctx->looked.data == NULL) {
         return NGX_ERROR;
@@ -346,6 +377,7 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     }
 
     /* add the incoming chain to the chain ctx->in */
+    /* in拷贝到ctx->in */
 
     if (in) {
         if (ngx_chain_add_copy(r->pool, &ctx->in, in) != NGX_OK) {
@@ -359,8 +391,10 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     flush = 0;
     last = 0;
 
+    /* 循环遍历chain中所有的buf */
     while (ctx->in || ctx->buf) {
 
+        /* 取chain中的第一个buf */
         if (ctx->buf == NULL) {
             ctx->buf = ctx->in->buf;
             ctx->in = ctx->in->next;
@@ -377,8 +411,12 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
         b = NULL;
 
+        /* 循环遍历一个buf中的内容 */
         while (ctx->pos < ctx->buf->last) {
 
+            /* 匹配规则，返回结果;
+             * 这里通过修改pos、last等参数，决定是否匹配结束
+             * */
             rc = ngx_http_sub_parse(r, ctx, last);
 
             ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -418,6 +456,7 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                 ctx->saved.len = 0;
             }
 
+            /* 找到了需要送往client的内容，分配空闲buf，记录这段数据 */
             if (ctx->copy_start != ctx->copy_end) {
 
                 cl = ngx_chain_get_free_buf(r->pool, &ctx->free);
@@ -452,6 +491,7 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
             /* rc == NGX_OK */
 
+            /* 成功找到匹配项的情况下，将目标内容放入buf中，并添加到chain中进行管理 */
             cl = ngx_chain_get_free_buf(r->pool, &ctx->free);
             if (cl == NULL) {
                 return NGX_ERROR;
@@ -463,6 +503,7 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
             slcf = ngx_http_get_module_loc_conf(r, ngx_http_sub_filter_module);
 
+            /* 为sub分配空间，存放替换后的内容 */
             if (ctx->sub == NULL) {
                 ctx->sub = ngx_pcalloc(r->pool, sizeof(ngx_str_t)
                                                 * ctx->matches->nelts);
@@ -476,6 +517,7 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
             if (sub->data == NULL) {
                 match = ctx->matches->elts;
 
+                /* 支持变量 */
                 if (ngx_http_complex_value(r, match[ctx->index].value, sub)
                     != NGX_OK)
                 {
@@ -492,10 +534,13 @@ ngx_http_sub_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                 b->sync = 1;
             }
 
+            /* 将cl放入out链中 */
             *ctx->last_out = cl;
             ctx->last_out = &cl->next;
 
             ctx->index = 0;
+            /* 是否已经应用过所有的规则,
+             * 这种计数有问题吗？如果同一个规则执行了2遍呢？ */
             ctx->once = slcf->once && (++ctx->applied == ctx->matches->nelts);
 
             continue;
@@ -677,24 +722,30 @@ ngx_http_sub_parse(ngx_http_request_t *r, ngx_http_sub_ctx_t *ctx,
 
         while (i != j) {
 
+            /* 这里保证了once设置的情况下，每条规则只执行一次：
+             * 规则执行后，sub中即填充了内容*/
             if (slcf->once && ctx->sub && ctx->sub[i].data) {
                 goto next;
             }
 
             m = &match[i].match;
 
+            /* 判断是否匹配 */
             rc = ngx_http_sub_match(ctx, start, m);
 
+            /* 不匹配，继续对比下一条规则 */
             if (rc == NGX_DECLINED) {
                 goto next;
             }
 
             ctx->index = i;
 
+            /* 部分匹配 */
             if (rc == NGX_AGAIN) {
                 goto again;
             }
 
+            /* 匹配成功 */
             ctx->offset = offset + (ngx_int_t) m->len;
             next = start + (ngx_int_t) m->len;
             end = ngx_max(next, 0);
@@ -742,6 +793,7 @@ done:
 
     /* send [ - looked.len, start ] to client */
 
+    /* start何时为负值: 上一个buf部分匹配，下一个buf补充后不匹配 */
     ctx->saved.len = ctx->looked.len + ngx_min(start, 0);
     ngx_memcpy(ctx->saved.data, ctx->looked.data, ctx->saved.len);
 
@@ -796,6 +848,7 @@ ngx_http_sub_match(ngx_http_sub_ctx_t *ctx, ngx_int_t start, ngx_str_t *m)
 
     while (p < ctx->buf->last && pat < pat_end) {
         if (ngx_tolower(*p) != *pat) {
+            /* 不匹配 */
             return NGX_DECLINED;
         }
 
@@ -803,11 +856,13 @@ ngx_http_sub_match(ngx_http_sub_ctx_t *ctx, ngx_int_t start, ngx_str_t *m)
         pat++;
     }
 
+    /* 部分匹配 */
     if (pat != pat_end) {
         /* partial match */
         return NGX_AGAIN;
     }
 
+    /* 完全匹配 */
     return NGX_OK;
 }
 
@@ -867,7 +922,7 @@ ngx_http_sub_filter(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     /* 执行ngx_http_compile_complex_value后，
      * complex_value->lengths字段存放了需要解析的变量的数组,
-     * */
+     * 只要match字符串中有变量，则为dynamic */
     if (ccv.complex_value->lengths != NULL) {
         slcf->dynamic = 1;
 
@@ -885,7 +940,14 @@ ngx_http_sub_filter(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
-    /* 如果pair->match中没有变量，pair->value中有变量会怎样? */
+    /* 如果pair->match中没有变量，pair->value中有变量会怎样:
+     * 不论value中是否有变量，最终字符串的解析都是通过ngx_http_complex_value获取的，
+     * 故value中不需要标记是否有变量
+     * 匹配以前，需要对match字符串进行特殊处理以提交匹配速度，
+     * 而在match中有没有变量的情况下，处理的时机是不一样的，故而需要dynamic字段标记；
+     * dynamic:0, 则match中没有变量，那么在merge_conf时即可进行处理，内容存放在conf中；
+     * dynamic:1, 则match中有变量，那么在header_filter时进行处理，内容放在contex中；
+     * */
 
     return NGX_CONF_OK;
 }
@@ -958,7 +1020,9 @@ ngx_http_sub_merge_conf(ngx_conf_t *cf, void *parent, void *child)
         }
 
         for (i = 0; i < n; i++) {
+            /* 需要匹配的字符串 */
             matches[i].match = pairs[i].match.value;
+            /* 替换后的complex_value */
             matches[i].value = &pairs[i].value;
         }
 
@@ -983,6 +1047,7 @@ ngx_http_sub_merge_conf(ngx_conf_t *cf, void *parent, void *child)
 }
 
 
+/* 针对match字符串进行处理 */
 static void
 ngx_http_sub_init_tables(ngx_http_sub_tables_t *tables,
     ngx_http_sub_match_t *match, ngx_uint_t n)
@@ -990,6 +1055,8 @@ ngx_http_sub_init_tables(ngx_http_sub_tables_t *tables,
     u_char      c;
     ngx_uint_t  i, j, min, max, ch;
 
+    /* 获取最大，字符串的最大、最小长度;
+     * 并存放在tables中*/
     min = match[0].match.len;
     max = match[0].match.len;
 
@@ -1001,9 +1068,11 @@ ngx_http_sub_init_tables(ngx_http_sub_tables_t *tables,
     tables->min_match_len = min;
     tables->max_match_len = max;
 
+    /* 取ngx_http_sub_cmp_index, 并按照match字符串中该位置的字符进行排序 */
     ngx_http_sub_cmp_index = tables->min_match_len - 1;
     ngx_sort(match, n, sizeof(ngx_http_sub_match_t), ngx_http_sub_cmp_matches);
 
+    /* shift初始化为min */
     min = ngx_min(min, 255);
     ngx_memset(tables->shift, min, 256);
 
@@ -1028,6 +1097,7 @@ ngx_http_sub_init_tables(ngx_http_sub_tables_t *tables,
 }
 
 
+/* 比较ngx_http_sub_cmp_index处的字符先后 */
 static ngx_int_t
 ngx_http_sub_cmp_matches(const void *one, const void *two)
 {
