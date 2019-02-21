@@ -3,6 +3,17 @@
  * Copyright (C) Igor Sysoev
  * Copyright (C) Nginx, Inc.
  * Questions:
+ * 1. 查找的字符串重复、部分重叠时, 并同时匹配2条规则时的替换规则：
+ *      a. [abc->xyz, abcd->lmn], abcd，只执行abc->xyz规则,
+ *          遇到abc字符串后，优先匹配abc->xyz规则，匹配完成后，abc不参与其他匹配；
+ *      b. [abcd->lmn, abc->xyz], abcd, 只执行abcd->lmn,
+ *          优先匹配前面的规则；
+ *      c. [abc->xyz, abc->lmn], abc, 只执行abc->xyz规则；
+ *      d. [abcd->xyz, cd->lmn], abcd, 只执行abcd->xyz规则；
+ *      e. [cd->xyz, abcd->lmn], abcd, 只执行abcd->lmn规则，
+ *      e. [adcc->lmn, cc->xyz], adcc, 只执行abcd->lmn规则，
+ *      原因是匹配成功后，该内容不再参与其他规则的匹配；
+ *      同时排序时保持了稳定性；
  */
 
 
