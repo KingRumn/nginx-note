@@ -44,6 +44,11 @@ ngx_create_temp_buf(ngx_pool_t *pool, size_t size)
 }
 
 
+/* *
+ * 创建一个缓冲区的链表结构
+ * 用缓冲区的链表结构,来管理整个缓冲区;
+ * 缓冲区链表与内存池直接关联;
+ * */
 ngx_chain_t *
 ngx_alloc_chain_link(ngx_pool_t *pool)
 {
@@ -51,6 +56,7 @@ ngx_alloc_chain_link(ngx_pool_t *pool)
 
     cl = pool->chain;
 
+    //如果内存池上有, 则取第一个, 并将内存池的chain指针后移
     if (cl) {
         pool->chain = cl->next;
         return cl;
@@ -151,12 +157,15 @@ ngx_chain_add_copy(ngx_pool_t *pool, ngx_chain_t **chain, ngx_chain_t *in)
     return NGX_OK;
 }
 
-
+/* *
+ * 获取一条未使用的buf链表,这个链表中只有一个buf
+ * */
 ngx_chain_t *
 ngx_chain_get_free_buf(ngx_pool_t *p, ngx_chain_t **free)
 {
     ngx_chain_t  *cl;
 
+    //空闲链表不为空, 则取free链中的第一个chain返回
     if (*free) {
         cl = *free;
         *free = cl->next;
@@ -164,11 +173,13 @@ ngx_chain_get_free_buf(ngx_pool_t *p, ngx_chain_t **free)
         return cl;
     }
 
+    //分配一个链表
     cl = ngx_alloc_chain_link(p);
     if (cl == NULL) {
         return NULL;
     }
 
+    //在该链表上分配一个buf
     cl->buf = ngx_calloc_buf(p);
     if (cl->buf == NULL) {
         return NULL;

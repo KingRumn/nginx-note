@@ -70,12 +70,14 @@ ngx_http_chunked_header_filter(ngx_http_request_t *r)
     }
 
     if (r->headers_out.content_length_n == -1) {
+        //如果HTTP版本小于1.1, 则不支持chunk, 该模块不做处理
         if (r->http_version < NGX_HTTP_VERSION_11) {
             r->keepalive = 0;
 
         } else {
             clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
+            //置位, 以便后续处理中采用chunk方式进行编码传输
             if (clcf->chunked_transfer_encoding) {
                 r->chunked = 1;
 
@@ -114,17 +116,23 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ctx = ngx_http_get_module_ctx(r, ngx_http_chunked_filter_module);
 
     out = NULL;
+
+    //ll指向out链的末尾,为最终要发送的数据
     ll = &out;
 
     size = 0;
+
+    //cl指向in, 为需要处理的buf
     cl = in;
 
     for ( ;; ) {
         ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                        "http chunk: %O", ngx_buf_size(cl->buf));
 
+        //循环将buf中的数据全部取出来,并合并到size中, 作为一个chunk进行发送
         size += ngx_buf_size(cl->buf);
 
+        //必须保证这里能走进去,否则发送的数据就为空?这里有点奇怪.
         if (cl->buf->flush
             || cl->buf->sync
             || ngx_buf_in_memory(cl->buf)
@@ -135,11 +143,13 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                 return NGX_ERROR;
             }
 
+            //将所有的buf放到out链的后面
             tl->buf = cl->buf;
             *ll = tl;
             ll = &tl->next;
         }
 
+        //终止条件,in链中的下一个buf为空
         if (cl->next == NULL) {
             break;
         }
@@ -148,6 +158,7 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     }
 
     if (size) {
+        //分配一个buf用于存放chunk的头, 64-bit的十六进制数
         tl = ngx_chain_get_free_buf(r->pool, &ctx->free);
         if (tl == NULL) {
             return NGX_ERROR;
@@ -174,11 +185,14 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         b->pos = chunk;
         b->last = ngx_sprintf(chunk, "%xO" CRLF, size);
 
+        // 把这个buf插在out的前面
         tl->next = out;
         out = tl;
     }
 
+    //此时ll指向最末尾的地址,也就是最初数据的tl->next
     if (cl->buf->last_buf) {
+        //最后一个buffer, 填充0长度的chunk,标记流的结束
         tl = ngx_chain_get_free_buf(r->pool, &ctx->free);
         if (tl == NULL) {
             return NGX_ERROR;
@@ -202,6 +216,7 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         }
 
     } else if (size > 0) {
+        // 分配一个buf放CRLF
         tl = ngx_chain_get_free_buf(r->pool, &ctx->free);
         if (tl == NULL) {
             return NGX_ERROR;
@@ -223,6 +238,7 @@ ngx_http_chunked_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     rc = ngx_http_next_body_filter(r, out);
 
+    //整理链表,释放已经用完的链
     ngx_chain_update_chains(r->pool, &ctx->free, &ctx->busy, &out,
                             (ngx_buf_tag_t) &ngx_http_chunked_filter_module);
 

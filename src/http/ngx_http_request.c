@@ -3461,6 +3461,7 @@ ngx_http_send_special(ngx_http_request_t *r, ngx_uint_t flags)
         return NGX_ERROR;
     }
 
+    //这里是为了使发送模块在发送结束之前填充一个0长度的chank
     if (flags & NGX_HTTP_LAST) {
 
         if (r == r->main && !r->post_action) {
